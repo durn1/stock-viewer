@@ -619,15 +619,46 @@ function updateChart(p) {
     const option = buildChartOption(p);
     if (Object.keys(option).length === 0) return;
 
-    // Add prevClose markLine to price series
+    // 零轴 (昨收线) — 加粗高亮，带价格标签
     if (p.prevClose) {
         option.series[0].markLine = {
             symbol: 'none',
             silent: true,
-            label: { show: false },
-            lineStyle: { color: '#4b5563', type: [4, 4], width: 1 },
+            label: {
+                show: true,
+                position: 'insideStartTop',
+                formatter: function(params) { return params.value.toFixed(2); },
+                color: '#eab308',
+                fontSize: 9,
+                backgroundColor: 'rgba(15,18,25,0.85)',
+                padding: [1, 4],
+                borderRadius: 2,
+                distance: 4
+            },
+            lineStyle: { color: '#eab308', type: 'solid', width: 1.5, opacity: 0.8 },
             data: [{ yAxis: p.prevClose }]
         };
+    }
+
+    // 图表右上角悬浮：实时价格 + 涨跌幅
+    if (p.price != null && p.prevClose) {
+        const cls = p.changePct > 0 ? '#ef4444' : p.changePct < 0 ? '#22c55e' : '#9ca3af';
+        const sign = p.changePct > 0 ? '+' : '';
+        option.graphic = [{
+            id: 'livePrice',
+            type: 'text',
+            right: 8,
+            top: 4,
+            bounding: 'raw',
+            z: 100,
+            style: {
+                text: p.price.toFixed(2) + '  ' + sign + p.changePct.toFixed(2) + '%',
+                fill: cls,
+                fontSize: 13,
+                fontWeight: 'bold',
+                fontFamily: 'SF Mono, Menlo, Consolas, monospace'
+            }
+        }];
     }
 
     p.chart.setOption(option, true);
