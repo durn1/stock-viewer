@@ -294,21 +294,22 @@ async function fetchQuote(panel) {
         );
         if (res && res.data) {
             const d = res.data;
-            panel.name     = d.f58 || d.f32 || '';
-            panel.price    = (typeof d.f43 === 'number' && d.f43 > 0) ? d.f43 / 100 : null;
-            panel.high     = (typeof d.f44 === 'number' && d.f44 > 0) ? d.f44 / 100 : null;
-            panel.low      = (typeof d.f45 === 'number' && d.f45 > 0) ? d.f45 / 100 : null;
-            panel.open     = (typeof d.f46 === 'number' && d.f46 > 0) ? d.f46 / 100 : null;
-            panel.prevClose= (typeof d.f60 === 'number' && d.f60 > 0) ? d.f60 / 100 : null;
-            panel.volume   = d.f47 || 0;
-            panel.amount   = d.f48 || 0;
-            panel.changePct= (typeof d.f170 === 'number') ? d.f170 / 100 : 0;
-            panel.changeAmt= (typeof d.f169 === 'number') ? d.f169 / 100 : 0;
+            panel.name = d.f58 || d.f32 || panel.name;
+            // fltt=2 返回真实价格，不需要除以 100
+            if (typeof d.f43 === 'number' && d.f43 > 1) panel.price = d.f43;
+            if (typeof d.f44 === 'number' && d.f44 > 1) panel.high  = d.f44;
+            if (typeof d.f45 === 'number' && d.f45 > 1) panel.low   = d.f45;
+            if (typeof d.f46 === 'number' && d.f46 > 1) panel.open  = d.f46;
+            if (typeof d.f60 === 'number' && d.f60 > 1) panel.prevClose = d.f60;
+            panel.volume    = d.f47 || panel.volume;
+            panel.amount    = d.f48 || panel.amount;
+            if (typeof d.f170 === 'number') panel.changePct = d.f170;
+            if (typeof d.f169 === 'number') panel.changeAmt = d.f169;
             updatePanelHeader(panel);
             updatePanelData(panel);
             if (panel.chart) updateChart(panel);
         }
-    } catch(e) { /* silent */ }
+    } catch(e) { /* 网络失败时保留旧数据 */ }
 }
 
 async function fetchTrend(panel) {
