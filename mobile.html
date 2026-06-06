@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="format-detection" content="telephone=no">
+    <title>A股看盘</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body {
+            height: 100%; width: 100%;
+            overflow: hidden;
+            -webkit-text-size-adjust: 100%;
+            -webkit-touch-callout: none;
+            touch-action: manipulation;
+        }
+
+        body {
+            background: #0b0e14;
+            color: #d1d5db;
+            font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', sans-serif;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ===== Header ===== */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 5px 10px;
+            padding-top: calc(5px + env(safe-area-inset-top));
+            background: #111520;
+            border-bottom: 1px solid #1e2536;
+            flex-shrink: 0;
+        }
+        .header-left { display: flex; align-items: center; gap: 6px; }
+        .header-title { font-size: 13px; font-weight: 700; color: #e5e7eb; letter-spacing: 0.5px; }
+        .market-status {
+            font-size: 9px; padding: 1px 6px;
+            border-radius: 6px; font-weight: 500;
+        }
+        .status-trading { background: rgba(239,68,68,0.15); color: #ef4444; }
+        .status-lunch   { background: rgba(234,179,8,0.15);  color: #eab308; }
+        .status-closed  { background: rgba(107,114,128,0.15); color: #6b7280; }
+        .header-right { font-size: 9px; color: #6b7280; display: flex; gap: 8px; align-items: center; }
+        .refresh-dot {
+            width: 5px; height: 5px; border-radius: 50%;
+            display: inline-block; margin-right: 2px;
+            background: #374151; transition: background 0.3s;
+        }
+        .refresh-dot.active { background: #22c55e; }
+
+        /* ===== Grid 2×3 ===== */
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: repeat(3, 1fr);
+            gap: 1px;
+            background: #1e2536;
+            overflow: hidden;
+        }
+
+        /* ===== Panel ===== */
+        .panel {
+            background: #0f1219;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            position: relative;
+            min-height: 0;
+            min-width: 0;
+        }
+
+        .panel-header {
+            display: flex;
+            align-items: center;
+            padding: 4px 5px;
+            gap: 3px;
+            background: #141824;
+            border-bottom: 1px solid #1e2536;
+            flex-shrink: 0;
+            z-index: 2;
+            min-height: 28px;
+        }
+
+        .stock-input {
+            background: #0b0e14;
+            border: 1px solid #2a3144;
+            color: #e5e7eb;
+            padding: 2px 4px;
+            font-size: 16px; /* 16px prevents iOS auto-zoom */
+            width: 58px;
+            min-height: 22px;
+            border-radius: 3px;
+            outline: none;
+            font-family: 'Menlo', 'Consolas', monospace;
+            -webkit-appearance: none;
+            appearance: none;
+            flex-shrink: 0;
+        }
+        .stock-input:focus { border-color: #3b82f6; }
+        .stock-input::placeholder { color: #374151; font-size: 12px; }
+
+        .stock-name {
+            font-size: 11px;
+            font-weight: 600;
+            color: #9ca3af;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+        }
+
+        .price-area {
+            display: flex;
+            align-items: baseline;
+            gap: 3px;
+            flex-shrink: 0;
+        }
+        .current-price {
+            font-size: 13px;
+            font-weight: 700;
+            font-family: 'Menlo', 'Consolas', monospace;
+        }
+        .price-change {
+            font-size: 9px;
+            font-family: 'Menlo', 'Consolas', monospace;
+        }
+
+        .up   { color: #ef4444; }
+        .down { color: #22c55e; }
+        .flat { color: #9ca3af; }
+
+        .chart-container {
+            flex: 1;
+            min-height: 0;
+            height: 0; /* 配合 flex:1 让 iOS Safari 正确计算高度 */
+            position: relative;
+        }
+
+        .panel-placeholder {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #374151;
+            font-size: 11px;
+            pointer-events: none;
+            z-index: 1;
+        }
+        .panel-placeholder.hidden { display: none; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div class="header-left">
+        <span class="header-title">A股看盘</span>
+        <span id="marketStatus" class="market-status status-closed">--</span>
+    </div>
+    <div class="header-right">
+        <span><span id="refreshDot" class="refresh-dot"></span><span id="refreshText">等待中</span></span>
+        <span id="clock"></span>
+    </div>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<script>
+// =====================================================================
+//  Configuration
+// =====================================================================
+const QUOTE_INTERVAL = 3000;
+const TREND_INTERVAL = 15000;
+const JSONP_TIMEOUT  = 8000;
+const IS_MOBILE = true;
+
+// =====================================================================
+//  State
+// =====================================================================
+const panels = [];
+let jsonpSeq = 0;
+let dotTimer = null;
+
+// =====================================================================
+//  localStorage 持久化
+// =====================================================================
+const STORAGE_KEY = 'stock_viewer_codes';
+
+function saveStockCodes() {
+    const codes = panels.map(p => p.code || '');
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(codes)); } catch(e) {}
+}
+
+function loadStockCodes() {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return [];
+        const arr = JSON.parse(raw);
+        return Array.isArray(arr) ? arr : [];
+    } catch(e) { return []; }
+}
+
+// =====================================================================
+//  Utility
+// =====================================================================
+function detectMarket(code) {
+    if (!code || code.length !== 6 || !/^\d{6}$/.test(code)) return null;
+    if (code.startsWith('6')) return 1;
+    if (code.startsWith('0')) return 0;
+    if (code.startsWith('3')) return 0;
+    return 0;
+}
+
+function formatPrice(v) {
+    if (v == null || isNaN(v) || v === '-') return '--';
+    return v.toFixed(2);
+}
+
+// =====================================================================
+//  JSONP
+// =====================================================================
+function jsonp(url) {
+    return new Promise((resolve, reject) => {
+        const cbName = '_stkCb' + (++jsonpSeq) + '_' + Date.now();
+        const script = document.createElement('script');
+        const timer = setTimeout(() => { cleanup(); reject(new Error('timeout')); }, JSONP_TIMEOUT);
+        function cleanup() {
+            clearTimeout(timer);
+            delete window[cbName];
+            if (script.parentNode) script.parentNode.removeChild(script);
+        }
+        window[cbName] = function(data) { cleanup(); resolve(data); };
+        script.src = url + '&cb=' + cbName;
+        script.onerror = function() { cleanup(); reject(new Error('error')); };
+        document.head.appendChild(script);
+    });
+}
+
+// =====================================================================
+//  Data Fetching
+// =====================================================================
+async function fetchQuote(panel) {
+    const market = detectMarket(panel.code);
+    if (market === null) return;
+    const secid = market + '.' + panel.code;
+    try {
+        const res = await jsonp(
+            'https://push2.eastmoney.com/api/qt/stock/get?fltt=2&invt=2' +
+            '&fields=f43,f44,f45,f46,f47,f48,f57,f58,f60,f169,f170,f171,f32' +
+            '&secid=' + secid
+        );
+        if (res && res.data) {
+            const d = res.data;
+            panel.name      = d.f58 || d.f32 || '';
+            panel.price     = (typeof d.f43 === 'number' && d.f43 > 0) ? d.f43 / 100 : null;
+            panel.prevClose = (typeof d.f60 === 'number' && d.f60 > 0) ? d.f60 / 100 : null;
+            panel.changePct = (typeof d.f170 === 'number') ? d.f170 / 100 : 0;
+            panel.changeAmt = (typeof d.f169 === 'number') ? d.f169 / 100 : 0;
+            updatePanelHeader(panel);
+            if (panel.chart) updateChart(panel);
+        }
+    } catch(e) {}
+}
+
+async function fetchTrend(panel) {
+    const market = detectMarket(panel.code);
+    if (market === null) return;
+    const secid = market + '.' + panel.code;
+    try {
+        const res = await jsonp(
+            'https://push2his.eastmoney.com/api/qt/stock/trends2/get' +
+            '?fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13' +
+            '&fields2=f51,f52,f53,f54,f55,f56,f57,f58' +
+            '&iscr=0&ndays=1&secid=' + secid
+        );
+        if (res && res.data && res.data.trends && res.data.trends.length > 0) {
+            panel.prevClose = (typeof res.data.preClose === 'number' && res.data.preClose > 0)
+                ? res.data.preClose : panel.prevClose;
+            if (res.data.name) panel.name = res.data.name;
+            panel.trendData = res.data.trends.map(item => {
+                const p = item.split(',');
+                return { time: p[0], price: parseFloat(p[2]), avg: parseFloat(p[7]), volume: parseInt(p[5]) || 0 };
+            });
+            updatePanelHeader(panel);
+            if (panel.chart) updateChart(panel);
+        }
+    } catch(e) {}
+}
+
+// =====================================================================
+//  UI Updates
+// =====================================================================
+function updatePanelHeader(p) {
+    p.els.name.textContent = p.name || '';
+    if (p.price != null) {
+        p.els.price.textContent = formatPrice(p.price);
+        const cls = p.changePct > 0 ? 'up' : p.changePct < 0 ? 'down' : 'flat';
+        p.els.price.className = 'current-price ' + cls;
+        const sign = p.changePct > 0 ? '+' : '';
+        p.els.change.textContent = sign + p.changePct.toFixed(2) + '%';
+        p.els.change.className = 'price-change ' + cls;
+    } else {
+        p.els.price.textContent = '--';
+        p.els.price.className = 'current-price flat';
+        p.els.change.textContent = '';
+    }
+    if (p.name || p.price != null) {
+        p.els.placeholder.classList.add('hidden');
+    }
+}
+
+// =====================================================================
+//  Chart (mobile-optimized)
+// =====================================================================
+function buildChartOption(p) {
+    const data = p.trendData;
+    if (!data || data.length === 0) return {};
+
+    const prevClose = p.prevClose;
+    const times  = data.map(d => d.time.substring(11, 16));
+    const prices = data.map(d => d.price);
+    const avgs   = data.map(d => d.avg);
+
+    // 乖离线
+    const redLines   = avgs.map(a => +(a / 0.98848).toFixed(4));
+    const greenLines = avgs.map(a => +(a * 0.98848).toFixed(4));
+
+    // 交叉信号
+    const sellPoints = [];
+    const buyPoints  = [];
+    for (let i = 1; i < data.length; i++) {
+        if (prices[i - 1] >= redLines[i - 1] && prices[i] < redLines[i]) {
+            sellPoints.push({
+                name: '卖', coord: [times[i], redLines[i]], symbol: 'none',
+                label: { show: true, position: 'top', formatter: '卖', color: '#ef4444',
+                         fontSize: 9, fontWeight: 'bold', distance: 4,
+                         textBorderColor: '#0f1219', textBorderWidth: 2 }
+            });
+        }
+        if (prices[i - 1] <= greenLines[i - 1] && prices[i] > greenLines[i]) {
+            buyPoints.push({
+                name: '买', coord: [times[i], greenLines[i]], symbol: 'none',
+                label: { show: true, position: 'bottom', formatter: '买', color: '#22c55e',
+                         fontSize: 9, fontWeight: 'bold', distance: 4,
+                         textBorderColor: '#0f1219', textBorderWidth: 2 }
+            });
+        }
+    }
+
+    // volume
+    const volumes = data.map((d, i) => {
+        const prev = i > 0 ? data[i - 1].price : prevClose;
+        return { value: d.volume, itemStyle: { color: d.price >= prev ? 'rgba(239,68,68,0.5)' : 'rgba(34,197,94,0.5)' } };
+    });
+
+    return {
+        animation: false,
+        tooltip: {
+            trigger: 'axis',
+            backgroundColor: 'rgba(15,18,25,0.95)',
+            borderColor: '#2a3144',
+            borderWidth: 1,
+            padding: [4, 6],
+            textStyle: { color: '#d1d5db', fontSize: 9, fontFamily: 'Menlo, Consolas, monospace' },
+            axisPointer: { type: 'line', lineStyle: { color: '#2a3144', type: 'dashed' } },
+            formatter: function(params) {
+                let s = '<div style="color:#6b7280;margin-bottom:2px;font-size:8px">' + params[0].axisValue + '</div>';
+                params.forEach(item => {
+                    if (item.seriesName === '成交量' || item.seriesName === '红线' || item.seriesName === '绿线') return;
+                    const val = item.value;
+                    const diff = val - prevClose;
+                    const pct = prevClose > 0 ? (diff / prevClose * 100).toFixed(2) : '0.00';
+                    const clr = diff >= 0 ? '#ef4444' : '#22c55e';
+                    const sign = diff >= 0 ? '+' : '';
+                    s += '<div style="font-size:9px">' + item.marker + item.seriesName +
+                         ' <span style="color:' + clr + ';font-weight:600">' + val.toFixed(2) +
+                         ' ' + sign + pct + '%</span></div>';
+                });
+                return s;
+            }
+        },
+        axisPointer: { link: [{ xAxisIndex: 'all' }] },
+        grid: [
+            { left: 32, right: 4, top: 4,    bottom: '20%' },
+            { left: 32, right: 4, top: '84%', bottom: 8 }
+        ],
+        xAxis: [
+            {
+                type: 'category', data: times, gridIndex: 0,
+                axisLine: { lineStyle: { color: '#1e2536' } },
+                axisTick: { show: false },
+                axisLabel: { color: '#4b5563', fontSize: 7, margin: 3,
+                    formatter: function(v) { return (v === '10:30' || v === '14:00') ? v : ''; }
+                },
+                splitLine: { show: false }
+            },
+            {
+                type: 'category', data: times, gridIndex: 1,
+                axisLine: { lineStyle: { color: '#1e2536' } },
+                axisTick: { show: false },
+                axisLabel: { color: '#4b5563', fontSize: 7,
+                    formatter: function(v) { return (v === '09:30' || v === '11:30' || v === '15:00') ? v : ''; }
+                },
+                splitLine: { show: false }
+            }
+        ],
+        yAxis: [
+            {
+                type: 'value', gridIndex: 0, scale: true, splitNumber: 3,
+                axisLine: { show: false }, axisTick: { show: false },
+                axisLabel: { color: '#4b5563', fontSize: 7, formatter: function(v) { return v.toFixed(2); } },
+                splitLine: { lineStyle: { color: '#1a1f2e', type: 'dashed' } }
+            },
+            {
+                type: 'value', gridIndex: 1, splitNumber: 2,
+                axisLine: { show: false }, axisTick: { show: false },
+                axisLabel: { show: false }, splitLine: { show: false }
+            }
+        ],
+        series: [
+            {
+                name: '价格', type: 'line', data: prices, xAxisIndex: 0, yAxisIndex: 0,
+                symbol: 'none', lineStyle: { color: '#3b82f6', width: 1 },
+                areaStyle: {
+                    color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                        { offset: 0, color: 'rgba(59,130,246,0.15)' },
+                        { offset: 1, color: 'rgba(59,130,246,0.01)' }
+                    ])
+                },
+                z: 2,
+                markPoint: { data: [...sellPoints, ...buyPoints], animation: false }
+            },
+            {
+                name: '均价', type: 'line', data: avgs, xAxisIndex: 0, yAxisIndex: 0,
+                symbol: 'none', lineStyle: { color: '#eab308', width: 1, type: 'dashed' }, z: 2
+            },
+            {
+                name: '红线', type: 'line', data: redLines, xAxisIndex: 0, yAxisIndex: 0,
+                symbol: 'none', lineStyle: { color: '#ef4444', width: 1.5 }, z: 1
+            },
+            {
+                name: '绿线', type: 'line', data: greenLines, xAxisIndex: 0, yAxisIndex: 0,
+                symbol: 'none', lineStyle: { color: '#22c55e', width: 1.5 }, z: 1
+            },
+            {
+                name: '成交量', type: 'bar', data: volumes, xAxisIndex: 1, yAxisIndex: 1, barMaxWidth: 3
+            }
+        ]
+    };
+}
+
+function updateChart(p) {
+    const option = buildChartOption(p);
+    if (Object.keys(option).length === 0) return;
+    if (p.prevClose) {
+        option.series[0].markLine = {
+            symbol: 'none', silent: true, label: { show: false },
+            lineStyle: { color: '#4b5563', type: [4, 4], width: 1 },
+            data: [{ yAxis: p.prevClose }]
+        };
+    }
+    p.chart.setOption(option, true);
+}
+
+// =====================================================================
+//  Market Status & Clock
+// =====================================================================
+function updateMarketStatus() {
+    const el = document.getElementById('marketStatus');
+    const now = new Date();
+    const day = now.getDay();
+    const mins = now.getHours() * 60 + now.getMinutes();
+    if (day === 0 || day === 6) { el.textContent = '休市'; el.className = 'market-status status-closed'; return; }
+    if (mins >= 570 && mins < 690) { el.textContent = '交易中'; el.className = 'market-status status-trading'; }
+    else if (mins >= 690 && mins < 780) { el.textContent = '午休'; el.className = 'market-status status-lunch'; }
+    else { el.textContent = '休市'; el.className = 'market-status status-closed'; }
+}
+
+function updateClock() {
+    const now = new Date();
+    const h = String(now.getHours()).padStart(2, '0');
+    const m = String(now.getMinutes()).padStart(2, '0');
+    document.getElementById('clock').textContent = h + ':' + m;
+    updateMarketStatus();
+}
+
+// =====================================================================
+//  Build Panels
+// =====================================================================
+function createPanel(index) {
+    const grid = document.getElementById('grid');
+    const panel = document.createElement('div');
+    panel.className = 'panel';
+    panel.innerHTML =
+        '<div class="panel-header">' +
+            '<input class="stock-input" placeholder="代码" maxlength="8" enterkeyhint="go" autocapitalize="characters" autocomplete="off" autocorrect="off" />' +
+            '<span class="stock-name"></span>' +
+            '<div class="price-area">' +
+                '<span class="current-price flat">--</span>' +
+                '<span class="price-change flat"></span>' +
+            '</div>' +
+        '</div>' +
+        '<div class="chart-container">' +
+            '<div class="panel-placeholder">输入股票代码</div>' +
+        '</div>';
+    grid.appendChild(panel);
+
+    const input       = panel.querySelector('.stock-input');
+    const nameEl      = panel.querySelector('.stock-name');
+    const priceEl     = panel.querySelector('.current-price');
+    const changeEl    = panel.querySelector('.price-change');
+    const chartDiv    = panel.querySelector('.chart-container');
+    const placeholder = panel.querySelector('.panel-placeholder');
+
+    const chart = echarts.init(chartDiv, null, { renderer: 'canvas' });
+
+    const p = {
+        index, code: '', name: '', price: null, prevClose: null,
+        changePct: 0, changeAmt: 0, trendData: [], chart,
+        els: { input, name: nameEl, price: priceEl, change: changeEl, placeholder }
+    };
+
+    function handleInput() {
+        let raw = input.value.trim().toUpperCase();
+        let code = raw;
+        if (/^(SH|SZ)\d{6}$/.test(raw)) code = raw.substring(2);
+        else if (!/^\d{6}$/.test(raw)) return;
+        if (code === p.code) return;
+
+        p.code = code;
+        p.trendData = [];
+        p.price = null;
+        p.name = '';
+        p.changePct = 0;
+        p.changeAmt = 0;
+        updatePanelHeader(p);
+        fetchQuote(p);
+        fetchTrend(p);
+        saveStockCodes();
+    }
+
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.keyCode === 13) {
+            e.preventDefault();
+            handleInput();
+            input.blur();
+        }
+    });
+    input.addEventListener('blur', handleInput);
+
+    panels.push(p);
+    return p;
+}
+
+// =====================================================================
+//  Refresh Logic
+// =====================================================================
+function refreshQuotes() {
+    const dot = document.getElementById('refreshDot');
+    const txt = document.getElementById('refreshText');
+    dot.classList.add('active');
+    txt.textContent = '刷新';
+    clearTimeout(dotTimer);
+    dotTimer = setTimeout(() => { dot.classList.remove('active'); txt.textContent = '3s'; }, 600);
+    panels.forEach(p => { if (p.code) fetchQuote(p); });
+}
+
+function refreshTrends() {
+    panels.forEach(p => { if (p.code) fetchTrend(p); });
+}
+
+// =====================================================================
+//  iOS 高度修复：手动计算 grid 像素高度
+// =====================================================================
+function fixLayoutHeight() {
+    var header = document.querySelector('.header');
+    var grid   = document.getElementById('grid');
+    if (!header || !grid) return;
+    var headerH = header.getBoundingClientRect().height;
+    var gridH   = window.innerHeight - headerH;
+    grid.style.height = gridH + 'px';
+}
+
+// =====================================================================
+//  Init
+// =====================================================================
+function init() {
+    // 先算好 grid 高度，再创建面板
+    fixLayoutHeight();
+
+    for (let i = 0; i < 6; i++) createPanel(i);
+
+    // 恢复保存的股票代码
+    const savedCodes = loadStockCodes();
+    savedCodes.forEach((code, i) => {
+        if (i < panels.length && code && /^\d{6}$/.test(code)) {
+            const p = panels[i];
+            p.code = code;
+            p.els.input.value = code;
+            p.els.placeholder.classList.add('hidden');
+            fetchQuote(p);
+            fetchTrend(p);
+        }
+    });
+
+    updateClock();
+    setInterval(updateClock, 1000);
+    setInterval(refreshQuotes, QUOTE_INTERVAL);
+    setInterval(refreshTrends, TREND_INTERVAL);
+
+    // iOS Safari 布局稳定后再 resize 图表（关键！）
+    requestAnimationFrame(function() {
+        panels.forEach(p => { if (p.chart) p.chart.resize(); });
+    });
+    setTimeout(function() {
+        panels.forEach(p => { if (p.chart) p.chart.resize(); });
+    }, 300);
+
+    // 屏幕旋转 / resize 自适应
+    let resizeTimer;
+    function handleResize() {
+        clearTimeout(resizeTimer);
+        fixLayoutHeight();
+        resizeTimer = setTimeout(() => {
+            panels.forEach(p => { if (p.chart) p.chart.resize(); });
+        }, 300);
+    }
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', function() {
+        setTimeout(handleResize, 500);
+    });
+}
+
+window.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
