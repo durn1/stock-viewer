@@ -458,7 +458,7 @@ function buildChartOption(p) {
         };
     });
 
-    return {
+    const result = {
         animation: false,
         tooltip: {
             trigger: 'axis',
@@ -613,15 +613,10 @@ function buildChartOption(p) {
             }
         ]
     };
-}
 
-function updateChart(p) {
-    const option = buildChartOption(p);
-    if (Object.keys(option).length === 0) return;
-
-    // 零轴 (昨收线) — 加粗高亮，带价格标签
-    if (p.prevClose) {
-        option.series[0].markLine = {
+    // 零轴 (昨收线) — 始终渲染，有昨收价就画线
+    if (prevClose) {
+        result.series[0].markLine = {
             symbol: 'none',
             silent: true,
             label: {
@@ -636,32 +631,37 @@ function updateChart(p) {
                 distance: 4
             },
             lineStyle: { color: '#6b7280', type: 'solid', width: 1.5, opacity: 0.9 },
-            data: [{ yAxis: p.prevClose }]
+            data: [{ yAxis: prevClose }]
         };
     }
 
-    // 图表右上角悬浮：实时价格 + 涨跌幅
-    if (p.price != null && p.prevClose) {
-        const cls = p.changePct > 0 ? '#ef4444' : p.changePct < 0 ? '#22c55e' : '#9ca3af';
-        const sign = p.changePct > 0 ? '+' : '';
-        option.graphic = [{
-            id: 'livePrice',
-            type: 'text',
-            right: 8,
-            top: 4,
-            bounding: 'raw',
-            z: 100,
+    // 图表右上角悬浮：实时价格 + 涨跌幅（用 quote 价格，兜底用趋势最后一个点）
+    var displayPrice = p.price;
+    var displayPct   = p.changePct;
+    if (displayPrice == null && data.length > 0 && prevClose) {
+        displayPrice = data[data.length - 1].price;
+        displayPct   = prevClose > 0 ? (displayPrice - prevClose) / prevClose * 100 : 0;
+    }
+    if (displayPrice != null && prevClose) {
+        var cls  = displayPct > 0 ? '#ef4444' : displayPct < 0 ? '#22c55e' : '#9ca3af';
+        var sign = displayPct > 0 ? '+' : '';
+        result.graphic = [{
+            id: 'livePrice', type: 'text',
+            right: 8, top: 4, bounding: 'raw', z: 100,
             style: {
-                text: p.price.toFixed(2) + '  ' + sign + p.changePct.toFixed(2) + '%',
-                fill: cls,
-                fontSize: 13,
-                fontWeight: 'bold',
+                text: displayPrice.toFixed(2) + '  ' + sign + displayPct.toFixed(2) + '%',
+                fill: cls, fontSize: 13, fontWeight: 'bold',
                 fontFamily: 'SF Mono, Menlo, Consolas, monospace'
             }
         }];
     }
 
-    p.chart.setOption(option, true);
+    return result;
+}
+
+function updateChart(p) {
+    var option = buildChartOption(p);
+    if (Object.keys(option).length > 0) p.chart.setOption(option, true);
 }
 
 // =====================================================================
