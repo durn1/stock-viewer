@@ -188,15 +188,15 @@
             }
             .panel-header { padding: 4px 5px; gap: 3px; min-height: 28px; }
             .stock-input {
-                width: 70px; font-size: 16px; /* 16px 防止 iOS 自动缩放 */
-                padding: 2px 4px; min-height: 22px;
+                width: 60px; font-size: 16px; /* 16px 防止 iOS 自动缩放 */
+                padding: 2px 3px; min-height: 22px;
                 -webkit-appearance: none; appearance: none;
             }
             .stock-input::placeholder { font-size: 12px; }
-            .stock-name { font-size: 11px; min-width: 0; }
-            .price-area { gap: 3px; }
-            .current-price { font-size: 13px; }
-            .price-change { font-size: 9px; }
+            .stock-name { font-size: 10px; min-width: 1px; flex-shrink: 1; flex-basis: auto; }
+            .price-area { gap: 2px; flex-shrink: 0; }
+            .current-price { font-size: 11px; }
+            .price-change { font-size: 8px; }
             .panel-data { display: none; }
             .panel-placeholder { font-size: 11px; }
         }
@@ -514,7 +514,11 @@ function updatePanelHeader(p) {
         priceEl.className = 'current-price ' + cls;
 
         const sign = p.changePct > 0 ? '+' : '';
-        changeEl.textContent = sign + formatPrice(p.changeAmt) + '  ' + sign + p.changePct.toFixed(2) + '%';
+        if (IS_MOBILE) {
+            changeEl.textContent = sign + p.changePct.toFixed(2) + '%';
+        } else {
+            changeEl.textContent = sign + formatPrice(p.changeAmt) + '  ' + sign + p.changePct.toFixed(2) + '%';
+        }
         changeEl.className = 'price-change ' + cls;
     } else {
         priceEl.textContent = '--';
