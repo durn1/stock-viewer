@@ -160,6 +160,22 @@
             font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
         }
         .panel-data .label { color: #374151; }
+
+        /* ===== 手机端适配: 2列×3行 ===== */
+        @media (max-width: 768px) {
+            .header { padding: 6px 12px; }
+            .header-title { font-size: 15px; }
+            .grid {
+                grid-template-columns: repeat(2, 1fr);
+                grid-template-rows: repeat(3, 1fr);
+            }
+            .panel-header { padding: 5px 8px; gap: 6px; }
+            .stock-input { width: 95px; font-size: 12px; padding: 3px 6px; }
+            .stock-name { font-size: 12px; }
+            .current-price { font-size: 15px; }
+            .price-change { font-size: 10px; }
+            .panel-data { padding: 2px 8px; gap: 8px; font-size: 10px; }
+        }
     </style>
 </head>
 <body>
