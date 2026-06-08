@@ -1,0 +1,1106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>A股看盘</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: #0b0e14;
+            color: #d1d5db;
+            font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ===== Header ===== */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 20px;
+            background: linear-gradient(180deg, #141824 0%, #111520 100%);
+            border-bottom: 1px solid #1e2536;
+            flex-shrink: 0;
+        }
+        .header-left { display: flex; align-items: center; gap: 14px; }
+        .header-title { font-size: 18px; font-weight: 700; color: #e5e7eb; letter-spacing: 1px; }
+        .market-status {
+            font-size: 12px;
+            padding: 2px 10px;
+            border-radius: 10px;
+            font-weight: 500;
+        }
+        .status-trading  { background: rgba(239,68,68,0.15); color: #ef4444; }
+        .status-lunch    { background: rgba(234,179,8,0.15);  color: #eab308; }
+        .status-closed   { background: rgba(107,114,128,0.15); color: #6b7280; }
+        .header-right { font-size: 12px; color: #6b7280; display: flex; gap: 16px; align-items: center; }
+        .refresh-dot {
+            width: 6px; height: 6px; border-radius: 50%;
+            display: inline-block; margin-right: 4px;
+            background: #374151; transition: background 0.3s;
+        }
+        .refresh-dot.active { background: #22c55e; }
+
+        /* ===== Grid ===== */
+        .grid {
+            flex: 1;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: repeat(2, 1fr);
+            gap: 1px;
+            background: #1e2536;
+            min-height: 0;
+        }
+
+        /* ===== Panel ===== */
+        .panel {
+            background: #0f1219;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .panel-header {
+            display: flex;
+            align-items: center;
+            padding: 7px 10px;
+            gap: 8px;
+            background: #141824;
+            border-bottom: 1px solid #1e2536;
+            flex-shrink: 0;
+            z-index: 2;
+        }
+        .stock-input {
+            background: #0b0e14;
+            border: 1px solid #2a3144;
+            color: #e5e7eb;
+            padding: 4px 8px;
+            font-size: 13px;
+            width: 110px;
+            border-radius: 4px;
+            outline: none;
+            font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+            transition: border-color 0.2s;
+        }
+        .stock-input:focus { border-color: #3b82f6; }
+        .stock-input::placeholder { color: #374151; }
+
+        .stock-name {
+            font-size: 13px;
+            font-weight: 600;
+            color: #9ca3af;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .price-area {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+        .current-price {
+            font-size: 18px;
+            font-weight: 700;
+            font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+        }
+        .price-change {
+            font-size: 11px;
+            font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+        }
+
+        .up      { color: #ef4444; }
+        .down    { color: #22c55e; }
+        .flat    { color: #9ca3af; }
+
+        .chart-container {
+            flex: 1;
+            min-height: 0;
+            position: relative;
+        }
+
+        /* Empty / loading state */
+        .panel-placeholder {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #374151;
+            font-size: 13px;
+            gap: 8px;
+            pointer-events: none;
+            z-index: 1;
+        }
+        .panel-placeholder.hidden { display: none; }
+        .panel-placeholder svg { opacity: 0.3; }
+
+        /* Panel data row */
+        .panel-data {
+            display: flex;
+            align-items: center;
+            padding: 2px 10px;
+            gap: 12px;
+            font-size: 11px;
+            color: #4b5563;
+            background: #0f1219;
+            flex-shrink: 0;
+            z-index: 2;
+            border-top: 1px solid #1a1f2e;
+            font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+        }
+        .panel-data .label { color: #374151; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div class="header-left">
+        <span class="header-title">A股看盘</span>
+        <span id="marketStatus" class="market-status status-closed">--</span>
+    </div>
+    <div class="header-right">
+        <span><span id="refreshDot" class="refresh-dot"></span><span id="refreshText">等待中</span></span>
+        <span id="clock"></span>
+    </div>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<script>
+// =====================================================================
+//  Configuration
+// =====================================================================
+const QUOTE_INTERVAL = 3000;   // 实时行情刷新间隔 (ms)
+const TREND_INTERVAL = 15000;  // 分时数据刷新间隔 (ms)
+const JSONP_TIMEOUT  = 8000;   // JSONP 超时 (ms)
+
+// =====================================================================
+//  State
+// =====================================================================
+const panels = [];
+let jsonpSeq = 0;
+let quoteTimer = null;
+let trendTimer = null;
+let dotTimer = null;
+
+// =====================================================================
+//  localStorage 持久化股票代码
+// =====================================================================
+const STORAGE_KEY = 'stock_viewer_codes';
+
+function saveStockCodes() {
+    const codes = panels.map(p => p.code || '');
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(codes)); } catch(e) {}
+}
+
+function loadStockCodes() {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return [];
+        const arr = JSON.parse(raw);
+        return Array.isArray(arr) ? arr : [];
+    } catch(e) { return []; }
+}
+
+// =====================================================================
+//  Utility
+// =====================================================================
+function resolveSecid(code) {
+    if (!code) return null;
+    // Already a full secid (e.g., 119.EURUSD, 105.AAPL, 101.GC00Y)
+    if (/^\d{2,3}\.[A-Za-z0-9]+$/.test(code)) return code;
+    // A-share 6-digit codes
+    if (!/^\d{6}$/.test(code)) return null;
+    if (code.startsWith('6'))   return '1.' + code;
+    if (code.startsWith('0'))   return '0.' + code;
+    if (code.startsWith('3'))   return '0.' + code;
+    if (code === '399001' || code === '399006' || code === '399300') return '0.' + code;
+    if (code === '399005') return '0.' + code;
+    return '0.' + code;
+}
+
+function generateFullDaySlots(secid) {
+    if (!secid) return null;
+    var now = new Date();
+    var ds = now.getFullYear() + '-' +
+        String(now.getMonth() + 1).padStart(2, '0') + '-' +
+        String(now.getDate()).padStart(2, '0');
+
+    var sessions;
+    if (/^(0|1)\.\d{6}$/.test(secid)) {
+        sessions = [[9,30,11,30],[13,0,15,0]];
+    } else if (/^116\./.test(secid)) {
+        sessions = [[9,30,12,0],[13,0,16,0]];
+    } else if (/^(105|106)\./.test(secid)) {
+        sessions = [[9,30,16,0]];
+    } else if (/^103\./.test(secid)) {
+        sessions = [[9,30,17,15]];
+    } else if (/^100\./.test(secid)) {
+        sessions = [[9,30,16,0]];
+    } else if (/^119\./.test(secid)) {
+        // 外汇 23h: 06:00-05:00 次日
+        var slots = [];
+        for (var h = 6; h < 24; h++) slots.push(ds + ' ' + String(h).padStart(2,'0') + ':00');
+        var nd = new Date(now.getTime() + 86400000);
+        var nds = nd.getFullYear() + '-' +
+            String(nd.getMonth() + 1).padStart(2, '0') + '-' +
+            String(nd.getDate()).padStart(2, '0');
+        for (var h = 0; h < 5; h++) slots.push(nds + ' ' + String(h).padStart(2,'0') + ':00');
+        return slots;
+    } else {
+        return null;
+    }
+
+    var slots = [];
+    for (var s = 0; s < sessions.length; s++) {
+        var sh = sessions[s][0], sm = sessions[s][1], eh = sessions[s][2], em = sessions[s][3];
+        var sm0 = (s === 0) ? sm : 0;
+        var t = sh * 60 + sm0;
+        var end = eh * 60 + em;
+        while (t <= end) {
+            var hh = Math.floor(t / 60), mm = t % 60;
+            slots.push(ds + ' ' + String(hh).padStart(2,'0') + ':' + String(mm).padStart(2,'0'));
+            t++;
+        }
+    }
+    return slots;
+}
+
+function formatVol(v) {
+    if (v == null || isNaN(v)) return '--';
+    if (v >= 1e8) return (v / 1e8).toFixed(2) + '亿';
+    if (v >= 1e4) return (v / 1e4).toFixed(1) + '万';
+    return v.toLocaleString();
+}
+
+function formatPrice(v) {
+    if (v == null || isNaN(v) || v === '-') return '--';
+    if (Math.abs(v) < 10) return v.toFixed(4);
+    return v.toFixed(2);
+}
+
+function isTradingTime() {
+    const now = new Date();
+    const day = now.getDay();
+    if (day === 0 || day === 6) return false;
+    const mins = now.getHours() * 60 + now.getMinutes();
+    return (mins >= 567 && mins <= 693) || (mins >= 777 && mins <= 903); // 9:27-11:33, 12:57-15:03
+}
+
+// =====================================================================
+//  JSONP
+// =====================================================================
+function jsonp(url) {
+    return new Promise((resolve, reject) => {
+        const cbName = '_stkCb' + (++jsonpSeq) + '_' + Date.now();
+        const script = document.createElement('script');
+        const timer = setTimeout(() => {
+            cleanup();
+            reject(new Error('JSONP timeout'));
+        }, JSONP_TIMEOUT);
+
+        function cleanup() {
+            clearTimeout(timer);
+            delete window[cbName];
+            if (script.parentNode) script.parentNode.removeChild(script);
+        }
+
+        window[cbName] = function(data) {
+            cleanup();
+            resolve(data);
+        };
+
+        script.src = url + '&cb=' + cbName;
+        script.onerror = function() {
+            cleanup();
+            reject(new Error('JSONP error'));
+        };
+
+        document.head.appendChild(script);
+    });
+}
+
+// =====================================================================
+//  Data Fetching
+// =====================================================================
+async function fetchQuote(panel) {
+    const secid = resolveSecid(panel.code);
+    if (!secid) return;
+    try {
+        const res = await jsonp(
+            'https://push2.eastmoney.com/api/qt/stock/get?fltt=2&invt=2' +
+            '&fields=f43,f44,f45,f46,f47,f48,f57,f58,f60,f169,f170,f171,f32' +
+            '&secid=' + secid
+        );
+        if (res && res.data) {
+            const d = res.data;
+            panel.name = d.f58 || d.f32 || panel.name;
+            // fltt=2 返回真实价格，不需要除以 100
+            if (typeof d.f43 === 'number' && d.f43 > 1) panel.price = d.f43;
+            if (typeof d.f44 === 'number' && d.f44 > 1) panel.high  = d.f44;
+            if (typeof d.f45 === 'number' && d.f45 > 1) panel.low   = d.f45;
+            if (typeof d.f46 === 'number' && d.f46 > 1) panel.open  = d.f46;
+            if (typeof d.f60 === 'number' && d.f60 > 1) panel.prevClose = d.f60;
+            panel.volume    = d.f47 || panel.volume;
+            panel.amount    = d.f48 || panel.amount;
+            if (typeof d.f170 === 'number') panel.changePct = d.f170;
+            if (typeof d.f169 === 'number') panel.changeAmt = d.f169;
+            updatePanelHeader(panel);
+            updatePanelData(panel);
+
+            // === 实时价格追加到分时数据，实现秒级图表更新 ===
+            if (panel.trendData && panel.trendData.length > 0 && panel.price != null) {
+                var now = new Date();
+                var hh = String(now.getHours()).padStart(2, '0');
+                var mm = String(now.getMinutes()).padStart(2, '0');
+                var todayStr = now.getFullYear() + '-' +
+                    String(now.getMonth() + 1).padStart(2, '0') + '-' +
+                    String(now.getDate()).padStart(2, '0');
+                var currentTime = todayStr + ' ' + hh + ':' + mm;
+
+                var last = panel.trendData[panel.trendData.length - 1];
+                var lastTime = last.time.substring(0, 16);
+
+                if (currentTime === lastTime) {
+                    // 同一分钟：更新价格
+                    last.price = panel.price;
+                } else if (currentTime > lastTime) {
+                    // 新分钟：追加数据点，线性插值成交量
+                    var prevVol = panel.trendData.length > 1
+                        ? panel.trendData[panel.trendData.length - 1].volume
+                        : 0;
+                    var estVol = panel.trendData.length > 1
+                        ? Math.max(0, panel.volume - (panel.trendData.length - 1) * prevVol)
+                        : panel.volume || 0;
+                    panel.trendData.push({
+                        time: currentTime,
+                        price: panel.price,
+                        avg: panel.amount > 0 && panel.volume > 0
+                            ? panel.amount / panel.volume : panel.price,
+                        volume: estVol
+                    });
+                    panel.lastRealtimeTime = currentTime;
+                }
+            }
+
+            if (panel.chart) updateChart(panel);
+        }
+    } catch(e) { /* 网络失败时保留旧数据 */ }
+}
+
+async function fetchTrend(panel) {
+    const secid = resolveSecid(panel.code);
+    if (!secid) return;
+    try {
+        const res = await jsonp(
+            'https://push2his.eastmoney.com/api/qt/stock/trends2/get' +
+            '?fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13' +
+            '&fields2=f51,f52,f53,f54,f55,f56,f57,f58' +
+            '&iscr=0&ndays=1&secid=' + secid
+        );
+        if (res && res.data && res.data.trends && res.data.trends.length > 0) {
+            panel.prevClose = (typeof res.data.preClose === 'number' && res.data.preClose > 0)
+                ? res.data.preClose : panel.prevClose;
+            if (res.data.name) panel.name = res.data.name;
+
+            // 保存比趋势API更新的实时数据点
+            var savedRealtimePoints = [];
+            if (panel.lastRealtimeTime && panel.trendData.length > 0) {
+                var apiLastTimeStr = '';
+                // 先用新数据判断 API 最后一个时间点
+                var newTrendData = res.data.trends.map(item => {
+                    const p = item.split(',');
+                    return {
+                        time:    p[0],
+                        price:   parseFloat(p[2]),
+                        avg:     parseFloat(p[7]),
+                        volume:  parseInt(p[5]) || 0
+                    };
+                });
+                if (newTrendData.length > 0) {
+                    apiLastTimeStr = newTrendData[newTrendData.length - 1].time.substring(0, 16);
+                }
+                // 从当前 trendData 中提取比 API 更新的实时点
+                for (var ri = 0; ri < panel.trendData.length; ri++) {
+                    if (panel.trendData[ri].time.substring(0, 16) > apiLastTimeStr) {
+                        savedRealtimePoints.push(panel.trendData[ri]);
+                    }
+                }
+                panel.trendData = newTrendData.concat(savedRealtimePoints);
+            } else {
+                panel.trendData = res.data.trends.map(item => {
+                    const p = item.split(',');
+                    return {
+                        time:    p[0],
+                        price:   parseFloat(p[2]),
+                        avg:     parseFloat(p[7]),
+                        volume:  parseInt(p[5]) || 0
+                    };
+                });
+            }
+
+            panel.lastTrendTime = panel.trendData[panel.trendData.length - 1].time;
+            updatePanelHeader(panel);
+            if (panel.chart) updateChart(panel);
+        }
+    } catch(e) { /* silent */ }
+}
+
+// =====================================================================
+//  UI Updates
+// =====================================================================
+function updatePanelHeader(p) {
+    const nameEl = p.els.name;
+    const priceEl = p.els.price;
+    const changeEl = p.els.change;
+
+    nameEl.textContent = p.name || '';
+
+    if (p.price != null) {
+        priceEl.textContent = formatPrice(p.price);
+        const cls = p.changePct > 0 ? 'up' : p.changePct < 0 ? 'down' : 'flat';
+        priceEl.className = 'current-price ' + cls;
+
+        const sign = p.changePct > 0 ? '+' : '';
+        changeEl.textContent = sign + formatPrice(p.changeAmt) + '  ' + sign + p.changePct.toFixed(2) + '%';
+        changeEl.className = 'price-change ' + cls;
+    } else {
+        priceEl.textContent = '--';
+        priceEl.className = 'current-price flat';
+        changeEl.textContent = '';
+    }
+
+    // hide placeholder once we have data
+    if (p.name || p.price != null) {
+        p.els.placeholder.classList.add('hidden');
+    }
+}
+
+function updatePanelData(p) {
+    if (!p.els) return;
+    const open = p.els.dataOpen;
+    const high = p.els.dataHigh;
+    const low  = p.els.dataLow;
+    const vol  = p.els.dataVol;
+    const amt  = p.els.dataAmt;
+
+    open.textContent = formatPrice(p.open);
+    high.textContent = formatPrice(p.high);
+    low.textContent  = formatPrice(p.low);
+    vol.textContent  = formatVol(p.volume);
+    amt.textContent  = formatVol(p.amount);
+
+    // color open/high/low relative to prevClose
+    if (p.prevClose) {
+        const colorOf = v => v > p.prevClose ? '#ef4444' : v < p.prevClose ? '#22c55e' : '#9ca3af';
+        if (p.open != null) open.style.color = colorOf(p.open);
+        if (p.high != null) high.style.color = colorOf(p.high);
+        if (p.low  != null) low.style.color  = colorOf(p.low);
+    }
+}
+
+// =====================================================================
+//  Chart
+// =====================================================================
+function buildChartOption(p) {
+    const data = p.trendData;
+    if (!data || data.length === 0) return {};
+
+    const prevClose = p.prevClose;
+    let times  = data.map(d => d.time.substring(11, 16));
+    let prices = data.map(d => d.price);
+    let avgs   = data.map(d => d.avg);
+
+    // ===== 通达信分时买卖指标 =====
+    // H1 = MAX(开盘, 最高), L1 = MIN(开盘, 最低), P1 = H1 - L1
+    var h1 = Math.max(p.open || prevClose, p.high || prevClose);
+    var l1 = Math.min(p.open || prevClose, p.low || prevClose);
+    var p1 = h1 - l1;
+
+    // 阻力线 & 支撑线 (动态, 随分时数据扩展)
+    var runHigh = prevClose, runLow = prevClose;
+    var resistanceArr = [], supportArr = [];
+    for (var k = 0; k < data.length; k++) {
+        runHigh = Math.max(runHigh, data[k].price);
+        runLow  = Math.min(runLow,  data[k].price);
+        var pH = Math.max(p.open || prevClose, runHigh);
+        var pL = Math.min(p.open || prevClose, runLow);
+        var pP = pH - pL;
+        resistanceArr.push(+(pL + pP * 8 / 9).toFixed(4));
+        supportArr.push(+(pL + pP * 0.5 / 9).toFixed(4));
+    }
+
+    // ===== 生成全日时间轴，固定 x 轴范围 =====
+    var fullSlots = generateFullDaySlots(resolveSecid(p.code));
+    if (fullSlots && fullSlots.length > 0) {
+        var slotMap = {};
+        for (var fi = 0; fi < fullSlots.length; fi++) slotMap[fullSlots[fi]] = fi;
+        times = fullSlots.map(function(s) { return s.substring(11, 16); });
+        var ePrices = new Array(fullSlots.length).fill(null);
+        var eAvgs = new Array(fullSlots.length).fill(null);
+        var eRes = new Array(fullSlots.length).fill(null);
+        var eSup = new Array(fullSlots.length).fill(null);
+        var eVol = new Array(fullSlots.length).fill(null);
+        var eVolClr = new Array(fullSlots.length).fill(null);
+        for (var di = 0; di < data.length; di++) {
+            var tk = data[di].time.substring(0, 16);
+            var idx = slotMap[tk];
+            if (idx !== undefined) {
+                ePrices[idx] = data[di].price;
+                eAvgs[idx] = data[di].avg;
+                eRes[idx] = resistanceArr[di];
+                eSup[idx] = supportArr[di];
+                eVol[idx] = data[di].volume;
+                var vPrev = di > 0 ? data[di - 1].price : prevClose;
+                eVolClr[idx] = data[di].price >= vPrev ? 'rgba(239,68,68,0.55)' : 'rgba(34,197,94,0.55)';
+            }
+        }
+        // 前向填充中间空隙，保留尾部 null（未发生的时间不画线）
+        for (var fi = 1; fi < fullSlots.length; fi++) {
+            if (ePrices[fi] == null && ePrices[fi - 1] != null) ePrices[fi] = ePrices[fi - 1];
+            if (eAvgs[fi] == null && eAvgs[fi - 1] != null) eAvgs[fi] = eAvgs[fi - 1];
+            if (eRes[fi] == null && eRes[fi - 1] != null) eRes[fi] = eRes[fi - 1];
+            if (eSup[fi] == null && eSup[fi - 1] != null) eSup[fi] = eSup[fi - 1];
+        }
+        // 清除尾部填充（未发生时间不应显示）
+        for (var fi = fullSlots.length - 1; fi >= 0; fi--) {
+            var hasReal = false;
+            for (var di2 = 0; di2 < data.length; di2++) {
+                if (data[di2].time.substring(0, 16) === fullSlots[fi].substring(0, 16)) { hasReal = true; break; }
+            }
+            if (hasReal) break;
+            ePrices[fi] = null; eAvgs[fi] = null; eRes[fi] = null; eSup[fi] = null; eVol[fi] = null; eVolClr[fi] = null;
+        }
+        prices = ePrices; avgs = eAvgs; resistanceArr = eRes; supportArr = eSup;
+    }
+
+    // 乖离线 (基于扩展后的均价)
+    const redLines   = avgs.map(a => a != null ? +(a / 0.98848).toFixed(4) : null);
+    const greenLines = avgs.map(a => a != null ? +(a * 0.98848).toFixed(4) : null);
+
+    // LONGCROSS(A, B, N): A 在过去 N 周期一直 <= B, 当前 A > B (上穿确认)
+    const sellPoints = [];
+    const buyPoints  = [];
+
+    for (let i = 2; i < times.length; i++) {
+        if (prices[i] == null) continue;
+        // 买: LONGCROSS(支撑, C, 2)
+        if (supportArr[i - 2] != null && prices[i - 2] != null &&
+            supportArr[i - 2] <= prices[i - 2] &&
+            supportArr[i - 1] != null && prices[i - 1] != null &&
+            supportArr[i - 1] <= prices[i - 1] &&
+            supportArr[i] > prices[i]) {
+            buyPoints.push({
+                name: '买',
+                coord: [times[i], prices[i]],
+                symbol: 'triangle', symbolSize: 8,
+                itemStyle: { color: '#ef4444' },
+                label: { show: false }
+            });
+        }
+        // 卖: LONGCROSS(C, 阻力, 2)
+        if (resistanceArr[i - 2] != null && prices[i - 2] != null &&
+            prices[i - 2] <= resistanceArr[i - 2] &&
+            resistanceArr[i - 1] != null && prices[i - 1] != null &&
+            prices[i - 1] <= resistanceArr[i - 1] &&
+            prices[i] > resistanceArr[i]) {
+            sellPoints.push({
+                name: '卖',
+                coord: [times[i], prices[i]],
+                symbol: 'triangle', symbolSize: 8, symbolRotate: 180,
+                itemStyle: { color: '#22c55e' },
+                label: { show: false }
+            });
+        }
+    }
+
+    // 成交量
+    const volumes = times.map(function(_, i) {
+        if (typeof eVol !== 'undefined' && eVol[i] != null) {
+            return { value: eVol[i], itemStyle: { color: eVolClr[i] } };
+        }
+        // 回退：直接使用原始数据（未知市场或无扩展时）
+        if (i < data.length) {
+            var prev = i > 0 ? data[i - 1].price : prevClose;
+            return {
+                value: data[i].volume,
+                itemStyle: { color: data[i].price >= prev ? 'rgba(239,68,68,0.55)' : 'rgba(34,197,94,0.55)' }
+            };
+        }
+        return { value: 0, itemStyle: { color: 'transparent' } };
+    });
+
+    const result = {
+        animation: false,
+        tooltip: {
+            trigger: 'axis',
+            backgroundColor: 'rgba(15,18,25,0.95)',
+            borderColor: '#2a3144',
+            borderWidth: 1,
+            padding: [8, 10],
+            textStyle: { color: '#d1d5db', fontSize: 11, fontFamily: 'SF Mono, Menlo, Consolas, monospace' },
+            axisPointer: {
+                type: 'cross',
+                lineStyle: { color: '#2a3144', type: 'dashed' },
+                crossStyle: { color: '#2a3144' }
+            },
+            formatter: function(params) {
+                let s = '<div style="color:#6b7280;margin-bottom:4px">' + params[0].axisValue + '</div>';
+                params.forEach(item => {
+                    if (item.seriesName === '成交量' || item.seriesName === '红线' || item.seriesName === '绿线' || item.seriesName === '阻力' || item.seriesName === '支撑') return;
+                    const val = item.value;
+                    if (val == null) return;
+                    const diff = val - prevClose;
+                    const pct = prevClose > 0 ? (diff / prevClose * 100).toFixed(2) : '0.00';
+                    const clr = diff >= 0 ? '#ef4444' : '#22c55e';
+                    const sign = diff >= 0 ? '+' : '';
+                    s += '<div style="display:flex;justify-content:space-between;gap:16px">' +
+                         '<span>' + item.marker + item.seriesName + '</span>' +
+                         '<span style="color:' + clr + ';font-weight:600">' + (Math.abs(val) < 10 ? val.toFixed(4) : val.toFixed(2)) +
+                         '  ' + sign + pct + '%</span></div>';
+                });
+                return s;
+            }
+        },
+        axisPointer: { link: [{ xAxisIndex: 'all' }] },
+        grid: [
+            { left: 52, right: 12, top: 8,    bottom: '24%' },
+            { left: 52, right: 12, top: '80%', bottom: 18 }
+        ],
+        xAxis: [
+            {
+                type: 'category',
+                data: times,
+                gridIndex: 0,
+                axisLine: { lineStyle: { color: '#1e2536' } },
+                axisTick: { show: false },
+                axisLabel: {
+                    color: '#4b5563', fontSize: 9, margin: 6,
+                    formatter: function(v) {
+                        return (v === '10:30' || v === '13:00' || v === '14:00') ? v : '';
+                    }
+                },
+                splitLine: { show: false }
+            },
+            {
+                type: 'category',
+                data: times,
+                gridIndex: 1,
+                axisLine: { lineStyle: { color: '#1e2536' } },
+                axisTick: { show: false },
+                axisLabel: {
+                    color: '#4b5563', fontSize: 9,
+                    formatter: function(v) {
+                        return (v === '09:30' || v === '10:30' || v === '11:30' || v === '13:00' || v === '14:00' || v === '15:00') ? v : '';
+                    }
+                },
+                splitLine: { show: false }
+            }
+        ],
+        yAxis: [
+            {
+                type: 'value',
+                gridIndex: 0,
+                scale: true,
+                splitNumber: 4,
+                axisLine: { show: false },
+                axisTick: { show: false },
+                axisLabel: {
+                    color: '#4b5563', fontSize: 9,
+                    formatter: function(v) { return Math.abs(v) < 10 ? v.toFixed(4) : v.toFixed(2); }
+                },
+                splitLine: { lineStyle: { color: '#1a1f2e', type: 'dashed' } }
+            },
+            {
+                type: 'value',
+                gridIndex: 1,
+                splitNumber: 2,
+                axisLine: { show: false },
+                axisTick: { show: false },
+                axisLabel: { show: false },
+                splitLine: { show: false }
+            }
+        ],
+        series: [
+            {
+                name: '价格',
+                type: 'line',
+                data: prices,
+                xAxisIndex: 0,
+                yAxisIndex: 0,
+                smooth: 0,
+                symbol: 'none',
+                lineStyle: { color: '#3b82f6', width: 1.2 },
+                areaStyle: {
+                    color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                        { offset: 0, color: 'rgba(59,130,246,0.18)' },
+                        { offset: 1, color: 'rgba(59,130,246,0.01)' }
+                    ])
+                },
+                z: 2,
+                markPoint: {
+                    data: [...sellPoints, ...buyPoints],
+                    animation: false
+                }
+            },
+            {
+                name: '均价',
+                type: 'line',
+                data: avgs,
+                xAxisIndex: 0,
+                yAxisIndex: 0,
+                smooth: 0,
+                symbol: 'none',
+                lineStyle: { color: '#eab308', width: 1, type: 'dashed' },
+                z: 2
+            },
+            {
+                name: '阻力',
+                type: 'line',
+                data: resistanceArr,
+                xAxisIndex: 0,
+                yAxisIndex: 0,
+                smooth: 0,
+                symbol: 'none',
+                lineStyle: { color: '#ff6b6b', width: 1, type: [4, 4] },
+                z: 1
+            },
+            {
+                name: '支撑',
+                type: 'line',
+                data: supportArr,
+                xAxisIndex: 0,
+                yAxisIndex: 0,
+                smooth: 0,
+                symbol: 'none',
+                lineStyle: { color: '#22c55e', width: 1, type: [4, 4] },
+                z: 1
+            },
+            {
+                name: '红线',
+                type: 'line',
+                data: redLines,
+                xAxisIndex: 0,
+                yAxisIndex: 0,
+                smooth: 0,
+                symbol: 'none',
+                lineStyle: { color: '#ef4444', width: 2 },
+                z: 1
+            },
+            {
+                name: '绿线',
+                type: 'line',
+                data: greenLines,
+                xAxisIndex: 0,
+                yAxisIndex: 0,
+                smooth: 0,
+                symbol: 'none',
+                lineStyle: { color: '#22c55e', width: 2 },
+                z: 1
+            },
+            {
+                name: '成交量',
+                type: 'bar',
+                data: volumes,
+                xAxisIndex: 1,
+                yAxisIndex: 1,
+                barMaxWidth: 4
+            }
+        ]
+    };
+
+    // 零轴 (昨收线) — 通达信风格: 醒目白色实线 + 右侧标签
+    if (prevClose) {
+        result.series[0].markLine = {
+            symbol: 'none',
+            silent: true,
+            label: {
+                show: true,
+                position: 'insideEndTop',
+                formatter: function(params) { return Math.abs(params.value) < 10 ? params.value.toFixed(4) : params.value.toFixed(2); },
+                color: '#e5e7eb',
+                fontSize: 10,
+                fontWeight: 'bold',
+                backgroundColor: 'rgba(15,18,25,0.9)',
+                padding: [2, 6],
+                borderRadius: 2,
+                distance: 4
+            },
+            lineStyle: { color: 'rgba(255,255,255,0.55)', type: 'solid', width: 1.5 },
+            data: [{ yAxis: prevClose }]
+        };
+    }
+
+    // 图表右上角悬浮：实时价格 + 涨跌幅（用 quote 价格，兜底用趋势最后一个点）
+    var displayPrice = p.price;
+    var displayPct   = p.changePct;
+    if (displayPrice == null && data.length > 0 && prevClose) {
+        displayPrice = data[data.length - 1].price;
+        displayPct   = prevClose > 0 ? (displayPrice - prevClose) / prevClose * 100 : 0;
+    }
+    if (displayPrice != null && prevClose) {
+        var cls  = displayPct > 0 ? '#ef4444' : displayPct < 0 ? '#22c55e' : '#9ca3af';
+        var sign = displayPct > 0 ? '+' : '';
+        result.graphic = [{
+            id: 'livePrice', type: 'text',
+            right: 8, top: 4, bounding: 'raw', z: 100,
+            style: {
+                text: (Math.abs(displayPrice) < 10 ? displayPrice.toFixed(4) : displayPrice.toFixed(2)) + '  ' + sign + displayPct.toFixed(2) + '%',
+                fill: cls, fontSize: 13, fontWeight: 'bold',
+                fontFamily: 'SF Mono, Menlo, Consolas, monospace'
+            }
+        }];
+    }
+
+    return result;
+}
+
+function updateChart(p) {
+    var option = buildChartOption(p);
+    if (Object.keys(option).length > 0) p.chart.setOption(option, true);
+}
+
+// =====================================================================
+//  Market Status & Clock
+// =====================================================================
+function updateMarketStatus() {
+    const el = document.getElementById('marketStatus');
+    const now = new Date();
+    const day = now.getDay();
+    const mins = now.getHours() * 60 + now.getMinutes();
+
+    if (day === 0 || day === 6) {
+        el.textContent = '休市';
+        el.className = 'market-status status-closed';
+        return;
+    }
+
+    if (mins >= 570 && mins < 690) {
+        el.textContent = '交易中';
+        el.className = 'market-status status-trading';
+    } else if (mins >= 690 && mins < 780) {
+        el.textContent = '午间休市';
+        el.className = 'market-status status-lunch';
+    } else {
+        el.textContent = '休市';
+        el.className = 'market-status status-closed';
+    }
+}
+
+function updateClock() {
+    const now = new Date();
+    const h = String(now.getHours()).padStart(2, '0');
+    const m = String(now.getMinutes()).padStart(2, '0');
+    const s = String(now.getSeconds()).padStart(2, '0');
+    document.getElementById('clock').textContent = h + ':' + m + ':' + s;
+    updateMarketStatus();
+}
+
+// =====================================================================
+//  Build Panels
+// =====================================================================
+function createPanel(index) {
+    const grid = document.getElementById('grid');
+
+    // DOM
+    const panel = document.createElement('div');
+    panel.className = 'panel';
+    panel.innerHTML =
+        '<div class="panel-header">' +
+            '<input class="stock-input" placeholder="代码/secid" maxlength="12" />' +
+            '<span class="stock-name"></span>' +
+            '<div class="price-area">' +
+                '<span class="current-price flat">--</span>' +
+                '<span class="price-change flat"></span>' +
+            '</div>' +
+        '</div>' +
+        '<div class="panel-data">' +
+            '<span><span class="label">开 </span><span class="dv" data-k="open">--</span></span>' +
+            '<span><span class="label">高 </span><span class="dv" data-k="high">--</span></span>' +
+            '<span><span class="label">低 </span><span class="dv" data-k="low">--</span></span>' +
+            '<span><span class="label">量 </span><span class="dv" data-k="vol">--</span></span>' +
+            '<span><span class="label">额 </span><span class="dv" data-k="amt">--</span></span>' +
+        '</div>' +
+        '<div class="chart-container">' +
+            '<div class="panel-placeholder">' +
+                '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">' +
+                    '<path d="M3 3v18h18"/><path d="M7 16l4-8 4 4 5-9"/>' +
+                '</svg>' +
+                '<span>输入股票代码</span>' +
+            '</div>' +
+        '</div>';
+
+    grid.appendChild(panel);
+
+    // References
+    const input     = panel.querySelector('.stock-input');
+    const nameEl    = panel.querySelector('.stock-name');
+    const priceEl   = panel.querySelector('.current-price');
+    const changeEl  = panel.querySelector('.price-change');
+    const chartDiv  = panel.querySelector('.chart-container');
+    const placeholder = panel.querySelector('.panel-placeholder');
+    const dvEls     = {};
+    panel.querySelectorAll('.dv').forEach(el => { dvEls[el.dataset.k] = el; });
+
+    // Init ECharts
+    const chart = echarts.init(chartDiv, null, { renderer: 'canvas' });
+
+    // Panel state
+    const p = {
+        index: index,
+        code: '',
+        name: '',
+        price: null,
+        high: null,
+        low: null,
+        open: null,
+        prevClose: null,
+        volume: 0,
+        amount: 0,
+        changePct: 0,
+        changeAmt: 0,
+        trendData: [],
+        lastTrendTime: '',
+        lastRealtimeTime: '',
+        chart: chart,
+        els: {
+            input: input,
+            name: nameEl,
+            price: priceEl,
+            change: changeEl,
+            placeholder: placeholder,
+            dataOpen: dvEls.open,
+            dataHigh: dvEls.high,
+            dataLow: dvEls.low,
+            dataVol: dvEls.vol,
+            dataAmt: dvEls.amt
+        }
+    };
+
+    // Input handling
+    function handleInput() {
+        let raw = input.value.trim().toUpperCase();
+        let code;
+        if (/^(SH|SZ)\d{6}$/.test(raw)) {
+            code = raw.substring(2);
+        } else if (/^\d+\.[A-Z0-9]+$/.test(raw)) {
+            code = raw; // secid format like 119.EURUSD
+        } else if (/^\d{6}$/.test(raw)) {
+            code = raw;
+        } else {
+            return; // invalid
+        }
+
+        if (code === p.code) return; // same stock
+
+        p.code = code;
+        p.trendData = [];
+        p.lastRealtimeTime = '';
+        p.price = null;
+        p.name = '';
+        p.changePct = 0;
+        p.changeAmt = 0;
+        updatePanelHeader(p);
+
+        // immediate fetch
+        fetchQuote(p);
+        fetchTrend(p);
+        saveStockCodes();
+    }
+
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            handleInput();
+            input.blur();
+        }
+    });
+    input.addEventListener('blur', handleInput);
+
+    panels.push(p);
+    return p;
+}
+
+// =====================================================================
+//  Refresh Logic
+// =====================================================================
+function refreshQuotes() {
+    // flash dot
+    const dot = document.getElementById('refreshDot');
+    const txt = document.getElementById('refreshText');
+    dot.classList.add('active');
+    txt.textContent = '刷新中';
+    clearTimeout(dotTimer);
+    dotTimer = setTimeout(() => {
+        dot.classList.remove('active');
+        txt.textContent = '3秒刷新';
+    }, 600);
+
+    panels.forEach(p => {
+        if (p.code) fetchQuote(p);
+    });
+}
+
+function refreshTrends() {
+    panels.forEach(p => {
+        if (p.code) fetchTrend(p);
+    });
+}
+
+// =====================================================================
+//  Init
+// =====================================================================
+function init() {
+    for (let i = 0; i < 6; i++) {
+        createPanel(i);
+    }
+
+    // 从 localStorage 恢复股票代码
+    const savedCodes = loadStockCodes();
+    savedCodes.forEach((code, i) => {
+        if (i < panels.length && code && (/^\d{6}$/.test(code) || /^\d+\.[A-Z0-9]+$/.test(code))) {
+            const p = panels[i];
+            p.code = code;
+            p.els.input.value = code;
+            p.els.placeholder.classList.add('hidden');
+            fetchQuote(p);
+            fetchTrend(p);
+        }
+    });
+
+    // Clock
+    updateClock();
+    setInterval(updateClock, 1000);
+
+    // Start refresh timers
+    setInterval(refreshQuotes, QUOTE_INTERVAL);
+    setInterval(refreshTrends, TREND_INTERVAL);
+
+    // Resize handler
+    let resizeTimer;
+    window.addEventListener('resize', function() {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+            panels.forEach(p => { if (p.chart) p.chart.resize(); });
+        }, 150);
+    });
+
+    // Initial trend fetch (so we have data even before first quote)
+    setTimeout(refreshTrends, 500);
+}
+
+window.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
