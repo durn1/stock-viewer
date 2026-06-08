@@ -2,11 +2,20 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="format-detection" content="telephone=no">
     <title>A股看盘</title>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body {
+            height: 100%; width: 100%;
+            overflow: hidden;
+            -webkit-text-size-adjust: 100%;
+            touch-action: manipulation;
+        }
 
         body {
             background: #0b0e14;
@@ -125,6 +134,7 @@
         .chart-container {
             flex: 1;
             min-height: 0;
+            height: 0; /* iOS Safari flex 高度修复 */
             position: relative;
         }
 
@@ -163,18 +173,32 @@
 
         /* ===== 手机端适配: 2列×3行 ===== */
         @media (max-width: 768px) {
-            .header { padding: 6px 12px; }
-            .header-title { font-size: 15px; }
+            body { -webkit-touch-callout: none; }
+            .header {
+                padding: 5px 10px;
+                padding-top: calc(5px + env(safe-area-inset-top));
+            }
+            .header-title { font-size: 13px; letter-spacing: 0.5px; }
+            .market-status { font-size: 9px; padding: 1px 6px; border-radius: 6px; }
+            .header-right { font-size: 9px; gap: 8px; }
+            .refresh-dot { width: 5px; height: 5px; }
             .grid {
-                grid-template-columns: repeat(2, 1fr);
+                grid-template-columns: 1fr 1fr;
                 grid-template-rows: repeat(3, 1fr);
             }
-            .panel-header { padding: 5px 8px; gap: 6px; }
-            .stock-input { width: 95px; font-size: 12px; padding: 3px 6px; }
-            .stock-name { font-size: 12px; }
-            .current-price { font-size: 15px; }
-            .price-change { font-size: 10px; }
-            .panel-data { padding: 2px 8px; gap: 8px; font-size: 10px; }
+            .panel-header { padding: 4px 5px; gap: 3px; min-height: 28px; }
+            .stock-input {
+                width: 70px; font-size: 16px; /* 16px 防止 iOS 自动缩放 */
+                padding: 2px 4px; min-height: 22px;
+                -webkit-appearance: none; appearance: none;
+            }
+            .stock-input::placeholder { font-size: 12px; }
+            .stock-name { font-size: 11px; min-width: 0; }
+            .price-area { gap: 3px; }
+            .current-price { font-size: 13px; }
+            .price-change { font-size: 9px; }
+            .panel-data { display: none; }
+            .panel-placeholder { font-size: 11px; }
         }
     </style>
 </head>
@@ -200,6 +224,7 @@
 const QUOTE_INTERVAL = 3000;   // 实时行情刷新间隔 (ms)
 const TREND_INTERVAL = 15000;  // 分时数据刷新间隔 (ms)
 const JSONP_TIMEOUT  = 8000;   // JSONP 超时 (ms)
+const IS_MOBILE = window.innerWidth <= 768;
 
 // =====================================================================
 //  State
@@ -690,11 +715,18 @@ function buildChartOption(p) {
             }
         },
         axisPointer: { link: [{ xAxisIndex: 'all' }] },
-        grid: [
-            { left: 52, right: 12, top: 8,    bottom: '24%' },
-            { left: 52, right: 12, top: '80%', bottom: 18 }
-        ],
-        xAxis: [
+        grid: IS_MOBILE
+            ? [{ left: 4, right: 4, top: 4, bottom: 22 }]
+            : [{ left: 52, right: 12, top: 8, bottom: '24%' }, { left: 52, right: 12, top: '80%', bottom: 18 }],
+        xAxis: IS_MOBILE ? [{
+            type: 'category', data: times, gridIndex: 0,
+            axisLine: { lineStyle: { color: '#1e2536' } },
+            axisTick: { show: false },
+            axisLabel: { color: '#4b5563', fontSize: 7, margin: 3,
+                formatter: function(v) { return (v === '10:30' || v === '14:00') ? v : ''; }
+            },
+            splitLine: { show: false }
+        }] : [
             {
                 type: 'category',
                 data: times,
@@ -724,7 +756,12 @@ function buildChartOption(p) {
                 splitLine: { show: false }
             }
         ],
-        yAxis: [
+        yAxis: IS_MOBILE ? [{
+            type: 'value', gridIndex: 0, scale: true, splitNumber: 3,
+            axisLine: { show: false }, axisTick: { show: false },
+            axisLabel: { show: false },
+            splitLine: { lineStyle: { color: '#1a1f2e', type: 'dashed' } }
+        }] : [
             {
                 type: 'value',
                 gridIndex: 0,
@@ -836,6 +873,14 @@ function buildChartOption(p) {
         ]
     };
 
+    // 手机端: 移除成交量 series, 简化 tooltip
+    if (IS_MOBILE) {
+        result.series.pop(); // 移除最后一个 series (成交量)
+        result.tooltip.padding = [4, 6];
+        result.tooltip.textStyle.fontSize = 9;
+        result.tooltip.axisPointer = { type: 'line', lineStyle: { color: '#2a3144', type: 'dashed' } };
+    }
+
     // 零轴 (昨收线) — 通达信风格: 醒目白色实线 + 右侧标签
     if (prevClose) {
         result.series[0].markLine = {
@@ -934,7 +979,7 @@ function createPanel(index) {
     panel.className = 'panel';
     panel.innerHTML =
         '<div class="panel-header">' +
-            '<input class="stock-input" placeholder="代码/secid" maxlength="12" />' +
+            '<input class="stock-input" placeholder="代码/secid" maxlength="12" enterkeyhint="go" autocapitalize="characters" autocomplete="off" autocorrect="off" />' +
             '<span class="stock-name"></span>' +
             '<div class="price-area">' +
                 '<span class="current-price flat">--</span>' +
